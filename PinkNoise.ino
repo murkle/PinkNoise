@@ -4,11 +4,11 @@
   Features:
     - Plays PinkNoiseLong.wav from SD card (looped)
     - Reads WiFi credentials from /ssid.txt on SD card
-    - Connects to WiFi and syncs time once via NTP (UK timezone)
-    - Text output in RED (on black), smallest legible font
+    - Connects to WiFi and syncs time via NTP (UK timezone)
+    - Logs to screen in RED, smallest legible font
     - Buttons:
         A - Decrease volume
-        B - Pause/Resume playback by setting volume to 0
+        B - Pause/Resume (via volume = 0)
         C - Increase volume
 
   SD Card Requirements:
@@ -50,6 +50,7 @@ void print_log(const char *str);
 // Helpers
 bool openWav(const char* path);
 bool readWiFiCredentials();
+void showCurrentTimeOnce();
 
 void setup() {
     M5.begin();
@@ -96,6 +97,7 @@ void setup() {
     }
 
     println_log("\nTime synced.");
+    showCurrentTimeOnce();
 
     if (!openWav(WAV_PATH)) {
         println_log("Failed to open WAV.");
@@ -109,7 +111,6 @@ void loop() {
     M5.update();
     static uint8_t buffer[512];
 
-    // Mute state via volume = 0
     if (volume > 0 && isPlaying && speakerActive) {
         if (wavFile.available()) {
             size_t bytesRead = wavFile.read(buffer, sizeof(buffer));
@@ -135,7 +136,7 @@ void loop() {
         printf_log("Volume: %d\n", volume);
     }
 
-    // Button B: Pause/resume (toggle volume)
+    // Button B: Pause/resume
     if (M5.BtnB.wasPressed()) {
         if (volume > 0) {
             savedVolume = volume;
@@ -154,6 +155,17 @@ void loop() {
         savedVolume = volume;
         M5.Speaker.setVolume(volume);
         printf_log("Volume: %d\n", volume);
+    }
+}
+
+void showCurrentTimeOnce() {
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+        char timeStr[32];
+        strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M", &timeinfo);
+        printf_log("Time: %s (%s)\n", timeStr, timeinfo.tm_isdst ? "BST" : "GMT");
+    } else {
+        println_log("Time unavailable.");
     }
 }
 
@@ -199,7 +211,7 @@ bool readWiFiCredentials() {
     return (ssid.length() > 0 && password.length() > 0);
 }
 
-// Logging functions
+// Logging
 void println_log(const char *str) {
     Serial.println(str);
     canvas.println(str);
