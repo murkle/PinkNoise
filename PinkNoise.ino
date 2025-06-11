@@ -1,3 +1,21 @@
+/*
+  PinkNoisePlayer - M5Stack CoreS3 (v2.7)
+  ----------------------------------------
+  Features:
+    - Plays PinkNoiseLong.wav from SD card (looped)
+    - Reads WiFi credentials from /ssid.txt on SD card
+    - Connects to WiFi and syncs time once via NTP (UK timezone)
+    - Text output in RED (on black), smallest legible font
+    - Buttons:
+        A - Decrease volume
+        B - Pause/Resume playback by setting volume to 0
+        C - Increase volume
+
+  SD Card Requirements:
+    /PinkNoiseLong.wav  - 16-bit PCM WAV audio
+    /ssid.txt           - Two lines: SSID and password
+*/
+
 #include <M5CoreS3.h>
 #include <SPI.h>
 #include <SD.h>
@@ -16,21 +34,22 @@ String ssid = "", password = "";
 File wavFile;
 bool isPlaying = true;
 int volume = 16;
+int savedVolume = 16;
 uint32_t sampleRate = 44100;
 uint16_t bitsPerSample = 16;
 uint8_t numChannels = 1;
-bool muteCleared = false;
+bool speakerActive = true;
 
 M5Canvas canvas(&M5.Display);
 
-// Logging helpers
+// Logging
 void printf_log(const char *format, ...);
 void println_log(const char *str);
 void print_log(const char *str);
 
+// Helpers
 bool openWav(const char* path);
 bool readWiFiCredentials();
-void showCurrentTime();
 
 void setup() {
     M5.begin();
@@ -39,8 +58,8 @@ void setup() {
 
     canvas.setColorDepth(1);
     canvas.createSprite(M5.Display.width(), M5.Display.height());
-    canvas.setPaletteColor(1, GREEN);
-    canvas.setTextSize((float)canvas.width() / 160);
+    canvas.setPaletteColor(1, RED);  // 🔴 RED TEXT
+    canvas.setTextSize(1.0);         // Smallest legible
     canvas.setTextScroll(true);
     canvas.fillSprite(BLACK);
     canvas.pushSprite(0, 0);
@@ -57,7 +76,7 @@ void setup() {
         while (1);
     }
 
-    println_log("Connecting to WiFi...");
+    printf_log("Connecting to WiFi (%s)...\n", ssid.c_str());
     WiFi.begin(ssid.c_str(), password.c_str());
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
@@ -83,16 +102,15 @@ void setup() {
         while (1);
     }
 
-    println_log("Playing PinkNoiseLong.wav in loop...");
+    println_log("Playing PinkNoiseLong.wav...");
 }
-
-unsigned long lastTimeDisplay = 0;
 
 void loop() {
     M5.update();
     static uint8_t buffer[512];
 
-    if (volume > 0 && isPlaying) {
+    // Mute state via volume = 0
+    if (volume > 0 && isPlaying && speakerActive) {
         if (wavFile.available()) {
             size_t bytesRead = wavFile.read(buffer, sizeof(buffer));
             if (bytesRead > 0) {
@@ -102,38 +120,40 @@ void loop() {
                     M5.Speaker.playRaw((int16_t*)buffer, bytesRead / 2, sampleRate, numChannels == 2, false);
                 }
             }
-            muteCleared = false;
         } else {
             int16_t silence[128] = {0};
             M5.Speaker.playRaw(silence, 128, sampleRate, numChannels == 2, false);
             wavFile.seek(44);
         }
-    } else if (!muteCleared) {
-        int16_t silence[128] = {0};
-        M5.Speaker.playRaw(silence, 128, sampleRate, numChannels == 2, false);
-        muteCleared = true;
     }
 
+    // Button A: Volume down
     if (M5.BtnA.wasPressed()) {
         volume = max(0, volume - 16);
+        savedVolume = (volume > 0) ? volume : savedVolume;
         M5.Speaker.setVolume(volume);
         printf_log("Volume: %d\n", volume);
     }
 
+    // Button B: Pause/resume (toggle volume)
     if (M5.BtnB.wasPressed()) {
-        isPlaying = !isPlaying;
-        println_log(isPlaying ? "Playing" : "Paused");
+        if (volume > 0) {
+            savedVolume = volume;
+            volume = 0;
+            println_log("Paused");
+        } else {
+            volume = savedVolume;
+            println_log("Resumed");
+        }
+        M5.Speaker.setVolume(volume);
     }
 
+    // Button C: Volume up
     if (M5.BtnC.wasPressed()) {
         volume = min(255, volume + 16);
+        savedVolume = volume;
         M5.Speaker.setVolume(volume);
         printf_log("Volume: %d\n", volume);
-    }
-
-    if (millis() - lastTimeDisplay > 10000) {
-        showCurrentTime();
-        lastTimeDisplay = millis();
     }
 }
 
@@ -155,8 +175,7 @@ bool openWav(const char* path) {
 
     wavFile.seek(34);
     bitsPerSample = wavFile.read() | (wavFile.read() << 8);
-
-    wavFile.seek(44);  // PCM data starts here
+    wavFile.seek(44);  // PCM data start
     printf_log("WAV: %u ch, %u bits, %lu Hz\n", numChannels, bitsPerSample, sampleRate);
     return true;
 }
@@ -180,30 +199,19 @@ bool readWiFiCredentials() {
     return (ssid.length() > 0 && password.length() > 0);
 }
 
-void showCurrentTime() {
-    struct tm timeinfo;
-    if (getLocalTime(&timeinfo)) {
-        char timeStr[32];
-        strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
-        printf_log("Time: %s (%s)\n", timeStr, timeinfo.tm_isdst ? "BST" : "GMT");
-    }
-}
-
-// Green log output with newline
+// Logging functions
 void println_log(const char *str) {
     Serial.println(str);
     canvas.println(str);
     canvas.pushSprite(0, 0);
 }
 
-// Green log output without newline
 void print_log(const char *str) {
     Serial.print(str);
     canvas.print(str);
     canvas.pushSprite(0, 0);
 }
 
-// Green log formatted print
 void printf_log(const char *format, ...) {
     char buf[256];
     va_list args;
