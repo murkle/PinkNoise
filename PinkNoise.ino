@@ -24,6 +24,8 @@ uint16_t bitsPerSample = 16;
 uint8_t numChannels = 1;
 bool speakerActive = true;
 bool wasPlayingLastLoop = false;
+bool timeSyncedAfterStop = false;
+int lastLoggedVolume = -1;
 
 M5Canvas canvas(&M5.Display);
 
@@ -35,7 +37,6 @@ struct TimeRange {
 
 std::vector<TimeRange> schedule;
 
-// ---------- Function declarations ----------
 void printf_log(const char *format, ...);
 void println_log(const char *str);
 void print_log(const char *str);
@@ -43,9 +44,8 @@ bool openWav(const char* path);
 bool readWiFiCredentials();
 void showCurrentTimeOnce();
 bool loadSchedule(const char* path);
-int  getScheduledVolume();
+int getScheduledVolume();
 
-// ---------- Setup ----------
 void setup() {
     M5.begin();
     M5.Speaker.begin();
@@ -106,16 +106,27 @@ void setup() {
     println_log("Ready.");
 }
 
-// ---------- Main loop ----------
 void loop() {
     M5.update();
     static uint8_t buffer[512];
     int scheduledVol = getScheduledVolume();
-    bool shouldPlay = (volume > 0 && scheduledVol > 0 && isPlaying && speakerActive);
+    int effectiveVolume = (scheduledVol >= 0) ? scheduledVol : volume;
+    bool shouldPlay = (effectiveVolume > 0 && isPlaying && speakerActive);
 
-    // Playback block
+    if (scheduledVol >= 0 && scheduledVol != lastLoggedVolume) {
+        struct tm timeinfo;
+        if (getLocalTime(&timeinfo)) {
+            char buf[32];
+            strftime(buf, sizeof(buf), "%H:%M", &timeinfo);
+            printf_log("%s Volume: %d\n", buf, scheduledVol);
+        } else {
+            printf_log("Volume changed to %d\n", scheduledVol);
+        }
+        lastLoggedVolume = scheduledVol;
+    }
+
     if (shouldPlay) {
-        M5.Speaker.setVolume(scheduledVol);
+        M5.Speaker.setVolume(effectiveVolume);
         if (wavFile.available()) {
             size_t bytesRead = wavFile.read(buffer, sizeof(buffer));
             if (bytesRead > 0) {
@@ -128,27 +139,32 @@ void loop() {
         }
     }
 
-    // Re-sync time when playback STOPS
-    if (wasPlayingLastLoop && !shouldPlay) {
+    if (!shouldPlay && !timeSyncedAfterStop) {
         configTzTime(tz, "pool.ntp.org");
         struct tm t;
         while (!getLocalTime(&t)) {
             delay(200);
         }
-        println_log("Time re-synced after playback stopped.");
+        println_log("Time re-synced after volume 0 or stop.");
+        char timeStr[32];
+        strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M", &t);
+        printf_log("Time: %s (%s)\n", timeStr, t.tm_isdst ? "BST" : "GMT");
+        timeSyncedAfterStop = true;
+    }
+
+    if (shouldPlay && !wasPlayingLastLoop) {
+        timeSyncedAfterStop = false;
     }
 
     wasPlayingLastLoop = shouldPlay;
 
-    // Button A: volume down
     if (M5.BtnA.wasPressed()) {
-        volume = max(0, volume - 16);
+        volume = max(0, volume - 2);
         savedVolume = (volume > 0) ? volume : savedVolume;
         M5.Speaker.setVolume(volume);
         printf_log("Volume: %d\n", volume);
     }
 
-    // Button B: pause/resume
     if (M5.BtnB.wasPressed()) {
         if (volume > 0) {
             savedVolume = volume;
@@ -161,16 +177,14 @@ void loop() {
         M5.Speaker.setVolume(volume);
     }
 
-    // Button C: volume up
     if (M5.BtnC.wasPressed()) {
-        volume = min(255, volume + 16);
+        volume = min(255, volume + 2);
         savedVolume = volume;
         M5.Speaker.setVolume(volume);
         printf_log("Volume: %d\n", volume);
     }
 }
 
-// ---------- Time display ----------
 void showCurrentTimeOnce() {
     struct tm timeinfo;
     if (getLocalTime(&timeinfo)) {
@@ -182,7 +196,6 @@ void showCurrentTimeOnce() {
     }
 }
 
-// ---------- WAV ----------
 bool openWav(const char* path) {
     wavFile = SD.open(path);
     if (!wavFile) return false;
@@ -203,7 +216,6 @@ bool openWav(const char* path) {
     return true;
 }
 
-// ---------- WiFi ----------
 bool readWiFiCredentials() {
     File file = SD.open("/ssid.txt");
     if (!file) return false;
@@ -219,7 +231,6 @@ bool readWiFiCredentials() {
     return (ssid.length() > 0 && password.length() > 0);
 }
 
-// ---------- Schedule ----------
 bool loadSchedule(const char* path) {
     schedule.clear();
     File file = SD.open(path);
@@ -255,7 +266,7 @@ bool loadSchedule(const char* path) {
 
 int getScheduledVolume() {
     struct tm timeinfo;
-    if (!getLocalTime(&timeinfo)) return volume;
+    if (!getLocalTime(&timeinfo)) return -1;
 
     int nowMin = timeinfo.tm_hour * 60 + timeinfo.tm_min;
     for (const auto& range : schedule) {
@@ -263,10 +274,9 @@ int getScheduledVolume() {
             return range.volume;
         }
     }
-    return 0;
+    return -1;
 }
 
-// ---------- Logging ----------
 void println_log(const char *str) {
     Serial.println(str);
     canvas.println(str);
