@@ -133,10 +133,10 @@ void loop() {
                 M5.Speaker.playRaw((int16_t*)buffer, bytesRead / 2, sampleRate, numChannels == 2, false);
             }
         } else {
-            int16_t silence[128] = {0};
-            M5.Speaker.playRaw(silence, 128, sampleRate, numChannels == 2, false);
-            wavFile.seek(44);
+            wavFile.seek(44); // rewind
         }
+    } else {
+        M5.Speaker.stop(); // stop all sound if not playing
     }
 
     if (!shouldPlay && !timeSyncedAfterStop) {
