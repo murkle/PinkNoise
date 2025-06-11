@@ -1,6 +1,8 @@
 #include <M5CoreS3.h>
 #include <SPI.h>
 #include <SD.h>
+#include <WiFi.h>
+#include <time.h>
 
 #define SD_SPI_SCK_PIN  18
 #define SD_SPI_MISO_PIN 19
@@ -8,23 +10,36 @@
 #define SD_SPI_CS_PIN   4
 #define WAV_PATH "/PinkNoiseLong.wav"
 
+// ---- Time/Network Settings ----
+const char* tz = "GMT0BST,M3.5.0/1,M10.5.0/2";
+String ssid = "";
+String password = "";
+
+// ---- WAV Playback ----
 File wavFile;
 bool isPlaying = true;
-int volume = 16;
+int volume = 128;
 uint32_t sampleRate = 44100;
 uint16_t bitsPerSample = 16;
 uint8_t numChannels = 1;
 
+// ---- Display ----
 M5Canvas canvas(&M5.Display);
 
 void printf_log(const char *format, ...);
 void println_log(const char *str);
 bool openWav(const char* path);
+bool readWiFiCredentials();
+void showCurrentTime();
 
 void setup() {
     M5.begin();
     M5.Speaker.begin();
     M5.Speaker.setVolume(volume);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.setCursor(0, 0);
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setTextColor(WHITE);
 
     canvas.setColorDepth(1);
     canvas.createSprite(M5.Display.width(), M5.Display.height());
@@ -33,11 +48,37 @@ void setup() {
     canvas.setTextScroll(true);
 
     SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
-
     if (!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
-        println_log("Card failed, or not present");
+        println_log("SD init failed.");
         while (1);
     }
+    println_log("SD mounted.");
+
+    if (!readWiFiCredentials()) {
+        println_log("Read /ssid.txt failed.");
+        while (1);
+    }
+
+    println_log("Connecting to WiFi...");
+    WiFi.begin(ssid.c_str(), password.c_str());
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        M5.Lcd.print(".");
+    }
+
+    M5.Lcd.println("\nWiFi Connected!");
+    M5.Lcd.println("IP: " + WiFi.localIP().toString());
+
+    configTzTime(tz, "pool.ntp.org");
+    M5.Lcd.println("Syncing time...");
+
+    struct tm timeinfo;
+    while (!getLocalTime(&timeinfo)) {
+        delay(500);
+        M5.Lcd.print("*");
+    }
+
+    M5.Lcd.println("\nTime synced.");
 
     if (!openWav(WAV_PATH)) {
         println_log("Failed to open WAV.");
@@ -46,6 +87,8 @@ void setup() {
 
     println_log("Playing /PinkNoise.wav in loop...");
 }
+
+unsigned long lastTimeDisplay = 0;
 
 void loop() {
     M5.update();
@@ -76,13 +119,19 @@ void loop() {
 
     if (M5.BtnB.wasPressed()) {
         isPlaying = !isPlaying;
-        println_log(isPlaying ? "Playing" : "Paused");
+        println_log(isPlaying ? "▶ Playing" : "⏸ Paused");
     }
 
     if (M5.BtnC.wasPressed()) {
         volume = min(255, volume + 16);
         M5.Speaker.setVolume(volume);
         printf_log("Volume: %d\n", volume);
+    }
+
+    // Update time every 10 seconds
+    if (millis() - lastTimeDisplay > 10000) {
+        showCurrentTime();
+        lastTimeDisplay = millis();
     }
 }
 
@@ -101,10 +150,44 @@ bool openWav(const char* path) {
 
     wavFile.seek(34);
     bitsPerSample = wavFile.read() | (wavFile.read() << 8);
-
     wavFile.seek(44);
     printf_log("WAV: %u ch, %u bits, %lu Hz\n", numChannels, bitsPerSample, sampleRate);
     return true;
+}
+
+bool readWiFiCredentials() {
+    File file = SD.open("/ssid.txt");
+    if (!file) {
+        println_log("Failed to open /ssid.txt");
+        return false;
+    }
+
+    String lines[2];
+    int idx = 0;
+    while (file.available() && idx < 2) {
+        lines[idx++] = file.readStringUntil('\n');
+    }
+    file.close();
+
+    ssid = lines[0]; ssid.trim();
+    password = lines[1]; password.trim();
+    return (ssid.length() > 0 && password.length() > 0);
+}
+
+void showCurrentTime() {
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+        char timeStr[32];
+        strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
+
+        M5.Lcd.fillRect(0, 100, 320, 30, BLACK);
+        M5.Lcd.setCursor(0, 100);
+        M5.Lcd.println(timeStr);
+
+        M5.Lcd.fillRect(0, 140, 320, 30, BLACK);
+        M5.Lcd.setCursor(0, 140);
+        M5.Lcd.printf("TZ: %s", timeinfo.tm_isdst ? "BST (Summer)" : "GMT (Winter)");
+    }
 }
 
 void printf_log(const char *format, ...) {
