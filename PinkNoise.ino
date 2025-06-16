@@ -207,9 +207,17 @@ void setup() {
   if(!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) { println_log("SD init failed."); while(1); }
   println_log("SD mounted");
 
-  // Open HR log file
-  hrLogFile = SD.open(HR_LOG_PATH, FILE_APPEND);
-  if(!hrLogFile) println_log("HR log open failed");
+  // Open or create HR log for append
+  if (SD.exists(HR_LOG_PATH)) {
+    hrLogFile = SD.open(HR_LOG_PATH, FILE_WRITE);
+    if (hrLogFile) hrLogFile.seek(hrLogFile.size());
+  } else {
+    hrLogFile = SD.open(HR_LOG_PATH, FILE_WRITE);
+    if (hrLogFile) {
+      hrLogFile.printf("timestamp,hr\n");
+    }
+  }
+  if (!hrLogFile) println_log("HR log open failed");
 
   // Load WiFi credentials
   if(!readWiFiCredentials()){ println_log("/ssid.txt read failed"); while(1); }
