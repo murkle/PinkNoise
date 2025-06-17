@@ -5,6 +5,10 @@
 #include <BLEClient.h>
 #include <BLE2902.h>
 
+// fatal error: rom/miniz.h: No such file or directory
+// Solution for this error is to downgrade the M5Stack board package from v3.2.1 to v2.1.4 using the Boards Manager in the Arduino IDE.
+// see https://www.gonnalearn.com/from-miniz-h-compilation-error-m5stack-arduino/
+
 // Standard Heart Rate Service and Measurement characteristic UUIDs:
 #define HR_SERVICE_UUID        "0000180d-0000-1000-8000-00805f9b34fb"
 #define HR_MEASUREMENT_UUID    "00002a37-0000-1000-8000-00805f9b34fb"
